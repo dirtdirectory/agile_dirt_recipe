@@ -1,0 +1,283 @@
+<?php
+
+/**
+ * @file
+ * Module file for ah_dirt.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function ah_dirt_recipe_menu() {
+  return array(
+    'admin/config/services/recipe' => array(
+      'title' => 'DiRT Recipe Config',
+      'description' => 'Configure RESTful DiRT retieval.',
+      'page callback' => 'drupal_get_form',
+      'access arguments' => array('administer site configuration'),
+      'page arguments' => array('ah_dirt_recipe_admin'),
+      /*'file' => 'includes/ah_dirt_recipe.admin.form.inc',*/
+      'type' => MENU_NORMAL_ITEM,
+    ),
+  );
+}
+
+/**
+ * Implements hook_services_resources().
+
+function ah_dirt_recipe_services_resources() {
+  $api = array(
+    'item2' => array(
+      'operations' => array(
+        'retrieve' => array(
+          'help' => 'Retrieves posted items',
+          'callback' => '_ah_dirt_recipe_item_retrieve',
+          'access callback' => 'user_access',
+          'access arguments' => array('access content'),
+          'access arguments append' => FALSE,
+          'args' => array(
+            array(
+              'name' => 'fn',
+              'type' => 'string',
+              'description' => 'Function to perform',
+              'source' => array('path' => '0'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+            array(
+              'name' => 'nitems',
+              'type' => 'int',
+              'description' => 'Number of latest items to get',
+              'source' => array('param' => 'nitems'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+            array(
+              'name' => 'since',
+              'type' => 'int',
+              'description' => 'Posts from the last number of days',
+              'source' => array('param' => 'since'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+          ),
+        ),
+      ),
+      'actions' => array(
+        'fetch' => array(
+          'help' => 'Retrieves posted items',
+          'callback' => '_ah_dirt_recipe_item_retrieve',
+          'access callback' => 'user_access',
+          'access arguments' => array('access content'),
+         'access arguments append' => FALSE,
+          'args' => array(
+            array(
+              'name' => 'fn',
+              'type' => 'string',
+              'description' => 'Function to perform',
+              'source' => array('path' => '0'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+            array(
+              'name' => 'nitems',
+              'type' => 'int',
+              'description' => 'Number of latest items to get',
+              'source' => array('param' => 'nitems'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+            array(
+              'name' => 'since',
+              'type' => 'int',
+              'description' => 'Posts from the last number of days',
+              'source' => array('param' => 'since'),
+              'optional' => TRUE,
+              'default' => '0',
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  return $api;
+}
+
+ */
+
+/**
+ * Callback function for item retrieval.
+ */
+function _ah_dirt_recipe_item_retrieve($fn, $nitems, $timestamp) {
+  // Sanitize inputs.
+  $nitems = intval($nitems);
+  $timestamp = intval($timestamp);
+
+  return
+      ah_dirt_recipe_find_item_items($nitems, $timestamp);
+}
+
+/**
+ * Gets item posts.
+ */
+function ah_dirt_recipe_find_item_items($nitems, $timestamp) {
+  global $language;
+  $lang_name = $language->language;
+  $nitems = isset($_POST['nitems']) ? $_POST['nitems'] : NULL;
+  $serialized_tools = filter_xss($_POST['tools']);
+  $tools = unserialize($serialized_tools);
+  $query = db_select('node', 'n');
+  $query->join('node_revision', 'v', '(n.nid = v.nid) AND (n.vid = v.vid)');
+  $query->addField('n', 'nid', 'nid');
+  $query->condition('n.type', 'item', '=');
+  if ($tools) {
+    $query->condition('v.title', $tools, 'in');
+  }
+  if ($timestamp) {
+    $query->condition('v.timestamp', time() - ($timestamp * 60 * 60 * 24), '>');
+  }
+  $query->orderBy('v.timestamp', 'DESC');
+  // Limited by items?
+  if ($nitems) {
+    $query->range(0, $nitems);
+  }
+  $items = $query->execute()->fetchAll();
+  $objects = array();
+
+  foreach ($items as $item) {
+    $alias = drupal_get_path_alias("node/{$item->nid}");
+    $node = node_load($item->nid);
+    $description = '';
+    // Allow for either defined or undefined language type.
+    if (isset($node->body['und'][0]['value'])) {
+      $description = $node->body[$lang_name][0]['value'];
+    }
+    if (isset($node->body[$lang_name][0]['value'])) {
+      $description = $node->body[$lang_name][0]['value'];
+    }
+    $object = new stdClass();
+    $object->nid = $node->nid;
+    $object->title = $node->title;
+    $object->description = $description;
+    $object->path = $alias;
+    $objects[] = $object;
+  }
+  return $objects;
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function ah_dirt_recipe_block_info() {
+
+  $blocks['dh_recipe_block'] = array(
+    'info' => t('Recipes'),
+    'status' => FALSE,
+    'region' => 'sidebar_first',
+    'visibility' => BLOCK_VISIBILITY_LISTED,
+    'pages' => 'node/*',
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function ah_dirt_recipe_block_view($delta = '') {
+  module_load_include('inc', 'ah_dirt_recipe', 'includes/utilities');
+  switch ($delta) {
+    case 'dh_recipe_block':
+      $block['subject'] = t('DHCommons');
+      $block['content'] = ah_dirt_recipe_get_recipes();
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function ah_dirt_recipe_theme() {
+  return array(
+    'dirt_recipes_item' => array(
+      'file' => 'theme/theme.inc',
+      'template' => 'theme/dirt-recipes-item',
+      'variables' => array('object' => NULL),
+    ),
+    'dirt_recipes_block' => array(
+      'file' => 'theme/theme.inc',
+      'template' => 'theme/dirt-recipes-block',
+      'variables' => array('object' => NULL),
+    ),
+  );
+}
+
+/**
+ * Admin form.
+ *
+ * @return array
+ *   Returns admin form.
+**/
+function ah_dirt_recipe_admin() {
+  $form = array();
+  $form['ah_recipes_api_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('API Key'),
+    '#default_value' => variable_get('ah_recipes_api_key', ''),
+    '#description' => t('API Key to access Recipes'),
+  );
+  $form['ah_dirt_recipe_recipes_url'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Recipes URL'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_url', 'http://dev-hermeneutica-d7.pantheon.berkeley.edu'),
+    '#description' => t('URL of Recipe site.'),
+  );
+  $form['ah_dirt_recipe_recipes_site_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name of Recipes site'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_site_name', 'Recipes'),
+    '#description' => t('Name of Recipes site supplying recipe information.'),
+  );
+  $form['ah_dirt_recipe_recipes_rest_path'] = array(
+    '#type' => 'textfield',
+    '#title' => t('REST Path'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_rest_path', 'rest'),
+    '#description' => t('rest path - as provided by DHCommon administrator'),
+  );
+  $form['ah_dirt_recipe_recipes_alias'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Alias'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_alias', 'recipe'),
+    '#description' => t('alias - as provided by DHCommon administrator'),
+  );
+  $form['ah_dirt_recipe_recipes_taxonomy'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Taxonomy'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_taxonomy', 'tools'),
+    '#description' => t('taxonomy - as provided by DHCommon administrator'),
+  );
+  $form['ah_dirt_recipe_recipes_site_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Project Site Name'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_site_name', 'Recipes'),
+    '#description' => t('Name of the site providing recipe information'),
+  );
+  $form['ah_dirt_recipe_recipe_count'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Recipe Count'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipe_count', 5),
+    '#description' => t('Maximum number of recipes to be shown in Recipes Tab on term view.'),
+  );
+  $form['ah_dirt_recipe_recipes_sort'] = array(
+    '#type' => 'radios',
+    '#title' => t('Sort by'),
+    '#default_value' => variable_get('ah_dirt_recipe_recipes_sort', 'timestamp'),
+    '#description' => t('Sort field for returned results'),
+    '#options' => array(
+      'timestamp' => t('Timestamp'),
+      'title' => t('Title'),
+    ),
+  );
+  return system_settings_form($form);
+}
